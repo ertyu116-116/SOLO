@@ -15,7 +15,7 @@ from mmdet.models import build_detector
 import cv2
 from scipy import ndimage
 
-def init_detector(config, checkpoint=None, device='cuda:0'):
+def init_detector(config, checkpoint=None, device='cuda'):
     """Initialize a detector from config file.
 
     Args:
@@ -42,6 +42,7 @@ def init_detector(config, checkpoint=None, device='cuda:0'):
             warnings.warn('Class names are not saved in the checkpoint\'s '
                           'meta data, use COCO classes by default.')
             model.CLASSES = get_classes('coco')
+
     model.cfg = config  # save the config in the model for convenience
     model.to(device)
     model.eval()
@@ -55,6 +56,7 @@ class LoadImage(object):
             results['filename'] = results['img']
         else:
             results['filename'] = None
+
         img = mmcv.imread(results['img'])
         results['img'] = img
         results['img_shape'] = img.shape
@@ -85,7 +87,8 @@ def inference_detector(model, img):
     data = scatter(collate([data], samples_per_gpu=1), [device])[0]
     # forward the model
     with torch.no_grad():
-        result = model(return_loss=False, rescale=True, **data)
+        result = model(return_loss=False, rescale=True, **data) #학습시킨 데이터를 이용하여 data의 mask를 구한다.
+
     return result
 
 
@@ -169,6 +172,7 @@ def show_result(img,
             color_mask = color_masks[labels[i]]
             mask = maskUtils.decode(segms[i]).astype(np.bool)
             img[mask] = img[mask] * 0.5 + color_mask * 0.5
+
     # draw bounding boxes
     mmcv.imshow_det_bboxes(
         img,
@@ -201,7 +205,7 @@ def show_result_pyplot(img,
             be written to the out file instead of shown in a window.
     """
     img = show_result(
-        img, result, class_names, score_thr=score_thr, show=False)
+        img, result, class_names, score_thr=score_thr, show=True)
     plt.figure(figsize=fig_size)
     plt.imshow(mmcv.bgr2rgb(img))
 
@@ -227,24 +231,22 @@ def show_result_ins(img,
         np.ndarray or None: If neither `show` nor `out_file` is specified, the
             visualized image is returned, otherwise None is returned.
     """
-
+    
     assert isinstance(class_names, (tuple, list))
     img = mmcv.imread(img)
     img_show = img.copy()
     h, w, _ = img.shape
 
-    if not result or result == [None]:
-        return img_show
     cur_result = result[0]
-    seg_label = cur_result[0]
+    seg_label = cur_result[0] #
     seg_label = seg_label.cpu().numpy().astype(np.uint8)
-    cate_label = cur_result[1]
+    cate_label = cur_result[1] #ex.(9,426,640) the number of mask is 9
     cate_label = cate_label.cpu().numpy()
     score = cur_result[2].cpu().numpy()
 
     vis_inds = score > score_thr
     seg_label = seg_label[vis_inds]
-    num_mask = seg_label.shape[0]
+    num_mask = seg_label.shape[0] # the number of mask
     cate_label = cate_label[vis_inds]
     cate_score = score[vis_inds]
 
@@ -270,11 +272,13 @@ def show_result_ins(img,
         cur_mask = seg_label[idx, :, :]
         cur_mask = mmcv.imresize(cur_mask, (w, h))
         cur_mask = (cur_mask > 0.5).astype(np.uint8)
+
         if cur_mask.sum() == 0:
             continue
         color_mask = color_masks[idx]
         cur_mask_bool = cur_mask.astype(np.bool)
-        img_show[cur_mask_bool] = img[cur_mask_bool] * 0.5 + color_mask * 0.5
+
+        img_show[cur_mask_bool] = img[cur_mask_bool]*0.5+ color_mask * 0.5 #instance segmentation ->  색깔을 입히다.
 
         cur_cate = cate_label[idx]
         cur_score = cate_score[idx]
@@ -284,7 +288,11 @@ def show_result_ins(img,
         vis_pos = (max(int(center_x) - 10, 0), int(center_y))
         cv2.putText(img_show, label_text, vis_pos,
                         cv2.FONT_HERSHEY_COMPLEX, 0.3, (255, 255, 255))  # green
+
+
     if out_file is None:
-        return img_show
+        return img
     else:
+        back_ground = ~np.sum(seg_label,axis=0).astype(np.bool) #segmentation한 것들의 반대값을 줘서 더한다.
+        img_show[back_ground] = img[back_ground]*0+ color_mask * 0 #background에 0을 곱해서 배경을 제거한다. 
         mmcv.imwrite(img_show, out_file)
